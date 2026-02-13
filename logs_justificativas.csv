@@ -1,0 +1,11 @@
+timestamp,Nome_Completo,Data_Inicio,Data_Fim,Motivo,acao,status,detalhe
+2026-02-13 12:34:37,YAN BRASIL ANGELIM DE BRITO ,13/02/26,13/02/26,meia folga manha,preparar_abono,INFO,Iniciando processamento da linha 0 para 'YAN BRASIL ANGELIM DE BRITO '.
+2026-02-13 12:34:43,YAN BRASIL ANGELIM DE BRITO ,13/02/26,13/02/26,meia folga manha,conferir_nome,OK,Nome na tela confere com o CSV.
+2026-02-13 12:34:47,YAN BRASIL ANGELIM DE BRITO ,13/02/26,13/02/26,meia folga manha,criar_abono,OK,Abono criado com sucesso.
+2026-02-13 12:34:47,YAN BRASIL ANGELIM DE BRITO ,23/02/26,23/02/26,atestado,preparar_abono,INFO,Iniciando processamento da linha 1 para 'YAN BRASIL ANGELIM DE BRITO '.
+2026-02-13 12:34:51,YAN BRASIL ANGELIM DE BRITO ,23/02/26,23/02/26,atestado,criar_abono,OK,Abono criado com sucesso.
+2026-02-13 12:34:51,YAN BRASIL ANGELIM DE BRITO ,25/02/26,25/02/26,folga,preparar_abono,INFO,Iniciando processamento da linha 2 para 'YAN BRASIL ANGELIM DE BRITO '.
+2026-02-13 12:34:56,YAN BRASIL ANGELIM DE BRITO ,25/02/26,25/02/26,folga,criar_abono,OK,Abono criado com sucesso.
+2026-02-13 12:34:56,YAN BRASIL ANGELIM DE BRITO ,03/02/26,04/02/26,meia folga tarde,preparar_abono,INFO,Iniciando processamento da linha 3 para 'YAN BRASIL ANGELIM DE BRITO '.
+2026-02-13 12:34:59,YAN BRASIL ANGELIM DE BRITO ,03/02/26,04/02/26,meia folga tarde,criar_abono,OK,Abono criado com sucesso.
+2026-02-13 12:35:04,YAN BRASIL ANGELIM DE BRITO ,03/02/26,04/02/26,meia folga tarde,voltar_lista,INFO,Voltando para lista para próximo funcionário.
