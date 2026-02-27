@@ -1,6 +1,7 @@
 import csv
 import datetime
 import os
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -16,8 +17,10 @@ from playwright.sync_api import (
 CAMINHO_CSV_JUSTIFICATIVAS = "justificativas.csv"
 CAMINHO_CSV_LOGS = "logs_justificativas.csv"
 
-TIMEOUT_CURTO = 5000      # 5s
-TIMEOUT_PADRAO = 15000    # 15s
+PERFIL_BROWSER = "perfil_rh247"
+
+TIMEOUT_CURTO = 5000
+TIMEOUT_PADRAO = 15000
 
 
 # ==============================
@@ -89,233 +92,32 @@ def registrar_log(linha, acao, status, detalhe):
         ])
 
 
+def registrar_log_basico(nome, etapa, status, mensagem):
+    agora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(CAMINHO_CSV_LOGS, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([agora, nome, "", "", "", etapa, status, mensagem])
+
+
 def ler_justificativas(caminho_csv):
-    # encoding latin1 para CSV do Windows
     df = pd.read_csv(caminho_csv, encoding="latin1")
     df.columns = [c.strip() for c in df.columns]
 
-    # Renomeia se vier como "Nome Completo"
     if "Nome Completo" in df.columns and "Nome_Completo" not in df.columns:
         df = df.rename(columns={"Nome Completo": "Nome_Completo"})
 
-    for col in ["Nome_Completo", "Data_Inicio", "Data_Fim", "Motivo"]:
+    for col in ["Nome_Completo", "Data_Inicio", "Data_Fim", "Motivo", "Status"]:
         if col not in df.columns:
             raise ValueError(f"Coluna obrigatória ausente no CSV: {col}")
+
+    df["Status"] = df["Status"].fillna("")
+
     return df
 
 
 # ==============================
-# FUNÇÕES DE NAVEGAÇÃO
+# POPUP DE ERRO (SWEETALERT2)
 # ==============================
-
-def esperar_tela_lista(page):
-    """
-    Verifica/espera que a tela de lista de funcionários esteja carregada.
-    """
-    print("[INFO] Verificando se a tela de lista está carregada...")
-    try:
-        campo_busca = page.locator('xpath=//*[@id="Dr"]/div[3]/div/div[2]/div[2]/div/input')
-        campo_busca.wait_for(state="visible", timeout=TIMEOUT_PADRAO * 2)
-        print("[OK] Tela de lista detectada (campo de busca visível).")
-    except PlaywrightTimeoutError:
-        print("[ALERTA] Não encontrei o campo de busca da tela de lista.")
-        print("Confira se você está na tela correta do RH247 nesta aba (lista de funcionários).")
-        input("Ajuste a tela no navegador e pressione ENTER para tentar continuar...")
-
-
-def buscar_funcionario_por_nome(page, nome):
-    """
-    Preenche o campo de busca com o nome e clica em pesquisar.
-    """
-    print(f"[INFO] Buscando funcionário pelo nome: '{nome}'")
-    try:
-        campo_busca = page.locator('xpath=//*[@id="Dr"]/div[3]/div/div[2]/div[2]/div/input')
-        campo_busca.wait_for(state="visible", timeout=TIMEOUT_PADRAO * 2)
-        campo_busca.click()
-        campo_busca.fill("")
-        campo_busca.fill(nome)
-
-        # Pausa para você ver o nome sendo preenchido
-        page.wait_for_timeout(1000)
-
-        botao_pesquisar = page.locator('xpath=//*[@id="Dr"]/div[3]/div/div[2]/div[2]/div/div/button/i')
-        botao_pesquisar.wait_for(state="visible", timeout=TIMEOUT_PADRAO * 2)
-        botao_pesquisar.click()
-
-        # Pausa para a tabela atualizar
-        page.wait_for_timeout(2000)
-    except PlaywrightTimeoutError:
-        raise RuntimeError("Timeout ao tentar usar campo de busca ou botão pesquisar.")
-
-
-def debug_listar_nomes_tabela(page):
-    """
-    Lista no terminal os nomes que estão na tabela de resultados após a busca.
-    """
-    print("[DEBUG] Lendo linhas da tabela de resultados...")
-    try:
-        linhas = page.locator('xpath=//*[@id="Dr"]/div[3]/div/table/tbody/tr')
-        linhas.first.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
-    except PlaywrightTimeoutError:
-        print("[DEBUG] Nenhuma linha visível na tabela (timeout).")
-        return
-
-    qtd_linhas = linhas.count()
-    print(f"[DEBUG] Quantidade de linhas na tabela: {qtd_linhas}")
-
-    for i in range(qtd_linhas):
-        idx = i + 1
-        xpath_nome = f'//*[@id="Dr"]/div[3]/div/table/tbody/tr[{idx}]/td[2]//span'
-        celula_nome = page.locator(f'xpath={xpath_nome}')
-        try:
-            texto_nome = celula_nome.inner_text(timeout=TIMEOUT_CURTO)
-            print(f"[DEBUG] Linha {idx} - Nome: '{texto_nome}'")
-        except PlaywrightTimeoutError:
-            print(f"[DEBUG] Linha {idx} - Nome: (timeout)")
-
-
-def abrir_ponto_funcionario_por_nome(page, nome_busca):
-    """
-    Na tela de lista, encontra a linha cujo nome da coluna 2 corresponde a nome_busca
-    e clica no botão Editar (coluna 12) dessa mesma linha.
-    """
-    nome_normalizado = normalizar_nome(nome_busca)
-
-    try:
-        linhas = page.locator('xpath=//*[@id="Dr"]/div[3]/div/table/tbody/tr')
-        linhas.first.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
-    except PlaywrightTimeoutError:
-        raise RuntimeError("Timeout ao aguardar a tabela de resultados.")
-
-    qtd_linhas = linhas.count()
-    if qtd_linhas == 0:
-        raise RuntimeError("Nenhuma linha na tabela de resultados após a busca.")
-
-    print(f"[INFO] Procurando '{nome_busca}' na tabela ({qtd_linhas} linhas)...")
-
-    for i in range(qtd_linhas):
-        idx = i + 1
-        xpath_nome = f'//*[@id="Dr"]/div[3]/div/table/tbody/tr[{idx}]/td[2]//span'
-        celula_nome = page.locator(f'xpath={xpath_nome}')
-        try:
-            texto_nome = celula_nome.inner_text(timeout=TIMEOUT_CURTO)
-        except PlaywrightTimeoutError:
-            print(f"[DEBUG] Linha {idx} - não consegui ler o nome (timeout).")
-            continue
-
-        print(f"[DEBUG] Linha {idx} - nome lido: '{texto_nome}'")
-
-        if normalizar_nome(texto_nome) == nome_normalizado:
-            print(f"[OK] Encontrado '{texto_nome}' na linha {idx}, clicando em Editar...")
-            xpath_editar = f'//*[@id="Dr"]/div[3]/div/table/tbody/tr[{idx}]/td[12]/button/i'
-            botao_editar = page.locator(f'xpath={xpath_editar}')
-            botao_editar.click()
-            page.wait_for_timeout(2000)
-            return
-
-    raise RuntimeError(f"Funcionário com nome '{nome_busca}' não encontrado na tabela.")
-
-
-def conferir_nome_na_tela(page, nome_csv):
-    """
-    Lê o nome em <strong> na tela do espelho e compara com o nome do CSV.
-    """
-    nome_normalizado_csv = normalizar_nome(nome_csv)
-    x_nome_strong = 'xpath=//*[@id="Dr"]/div/div/div[3]/div/div/div/div/div/div/div[1]/div/strong'
-
-    try:
-        strong_nome = page.locator(x_nome_strong)
-        strong_nome.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
-        texto_tela = strong_nome.inner_text(timeout=TIMEOUT_CURTO)
-    except PlaywrightTimeoutError:
-        raise RuntimeError("Não foi possível ler o nome do funcionário na tela de espelho.")
-
-    print(f"[INFO] Nome na tela: '{texto_tela}' | Nome do CSV: '{nome_csv}'")
-
-    if normalizar_nome(texto_tela) != nome_normalizado_csv:
-        raise RuntimeError(f"Nome na tela '{texto_tela}' difere do CSV '{nome_csv}'.")
-
-
-def criar_abono(page, linha):
-    """
-    Cria um abono na tela do espelho para a linha de justificativa informada.
-    Garante que as datas sejam preenchidas no formato dd/mm/aaaa.
-    """
-    nome = linha["Nome_Completo"]
-    data_ini_str_original = str(linha["Data_Inicio"])
-    data_fim_str_original = str(linha["Data_Fim"])
-    motivo = str(linha["Motivo"])
-
-    print(f"[INFO] Criando abono para {nome} | {data_ini_str_original} -> {data_fim_str_original} | Motivo: {motivo}")
-
-    # Validar e normalizar datas
-    data_ini = parse_data_br(data_ini_str_original)
-    data_fim = parse_data_br(data_fim_str_original)
-
-    if data_ini is None or data_fim is None:
-        raise RuntimeError(
-            f"Datas inválidas: Data_Inicio='{data_ini_str_original}', Data_Fim='{data_fim_str_original}'."
-        )
-
-    if data_fim < data_ini:
-        raise RuntimeError(
-            f"Data_Fim menor que Data_Inicio: {data_ini_str_original} > {data_fim_str_original}."
-        )
-
-    # Formata sempre como dd/mm/aaaa
-    data_ini_str = data_ini.strftime("%d/%m/%Y")
-    data_fim_str = data_fim.strftime("%d/%m/%Y")
-
-    # Clicar no botão "Abono de Ponto"
-    try:
-        print("[INFO] Procurando botão 'Abono de Ponto'...")
-        try:
-            botao_abono = page.get_by_role("button", name="Abono de Ponto")
-            botao_abono.wait_for(state="visible", timeout=TIMEOUT_CURTO)
-        except PlaywrightTimeoutError:
-            botao_abono = page.locator("button:has-text('Abono de Ponto')")
-            botao_abono.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
-
-        botao_abono.click()
-        page.wait_for_timeout(1000)
-    except PlaywrightTimeoutError:
-        raise RuntimeError("Botão 'Abono de Ponto' não encontrado ou não visível.")
-
-    # Preencher campos de abono
-    try:
-        campo_descricao = page.locator("#descricao")
-        campo_data_ini = page.locator("#data_ini")
-        campo_data_fim = page.locator("#data_fim")
-
-        campo_descricao.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
-        campo_data_ini.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
-        campo_data_fim.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
-
-        campo_descricao.fill("")
-        campo_descricao.fill(motivo)
-
-        campo_data_ini.fill("")
-        campo_data_ini.fill(data_ini_str)
-
-        campo_data_fim.fill("")
-        campo_data_fim.fill(data_fim_str)
-
-        botao_salvar = page.get_by_role("button", name="Salvar")
-        botao_salvar.click()
-
-    except PlaywrightTimeoutError:
-        raise RuntimeError("Erro ao preencher campos de abono ou clicar em 'Salvar'.")
-
-    # Espera o sistema processar
-    page.wait_for_timeout(2000)
-
-    # Verifica se apareceu popup de erro (ex.: período conflitante)
-    if tratar_popup_erro(page, linha):
-        print("[INFO] Abono não criado devido ao erro informado pelo sistema.")
-        return
-
-
-
 
 def tratar_popup_erro(page, linha):
     """
@@ -324,7 +126,6 @@ def tratar_popup_erro(page, linha):
     Retorna True se tratou um erro, False se não havia popup.
     """
     try:
-        # Localiza o container principal do popup de erro (swal2-popup com ícone de erro)
         popup = page.locator("div.swal2-popup.swal2-modal.swal2-icon-error.swal2-show")
         if not popup.is_visible(timeout=1000):
             return False
@@ -333,7 +134,6 @@ def tratar_popup_erro(page, linha):
     except Exception:
         return False
 
-    # Tenta ler o título e o conteúdo
     try:
         titulo = page.locator("#swal2-title").inner_text(timeout=TIMEOUT_CURTO)
     except Exception:
@@ -350,38 +150,305 @@ def tratar_popup_erro(page, linha):
 
     print(f"[ALERTA] Popup de erro detectado: {mensagem}")
 
-    # Clica no botão OK do popup
     try:
         botao_ok = page.locator("button.swal2-confirm")
+        botao_ok.scroll_into_view_if_needed()
+        page.wait_for_timeout(500)
         botao_ok.click()
         page.wait_for_timeout(1000)
     except Exception:
         print("[ALERTA] Não consegui clicar no botão OK do popup.")
 
-    # Registra no log que houve erro para essa linha
     registrar_log(linha, "popup_erro", "ERRO", mensagem)
+    return True
+
+
+# ==============================
+# FUNÇÕES DE NAVEGAÇÃO
+# ==============================
+
+def esperar_tela_lista(page):
+    print("[INFO] Verificando se a tela de lista está carregada...")
+    registrar_log_basico(
+        "sistema",
+        "esperar_tela_lista",
+        "INFO",
+        f"Verificando tela de lista. URL='{page.url}', titulo='{page.title()}'"
+    )
+
+    try:
+        campo_busca = page.wait_for_selector(
+            'xpath=//*[@id="Fr"]/div[3]/div/div[2]/div[2]/div/input',
+            timeout=TIMEOUT_PADRAO
+        )
+        print("[INFO] Campo de busca da lista encontrado.")
+        registrar_log_basico(
+            "sistema",
+            "esperar_tela_lista",
+            "OK",
+            "Campo de busca encontrado na tela de lista."
+        )
+        return campo_busca
+    except Exception as e:
+        print("[ALERTA] Não encontrei o campo de busca da tela de lista.")
+        print("Confira se você está na tela correta do RH247 nesta aba (lista de funcionários).")
+        print("Ajuste a tela no navegador e pressione ENTER para tentar continuar...")
+        registrar_log_basico(
+            "sistema",
+            "esperar_tela_lista",
+            "ERRO",
+            f"Nao encontrou campo de busca da lista. URL='{page.url}', titulo='{page.title()}', erro='{e}'"
+        )
+        input()
+        return None
+
+
+def buscar_funcionario_por_nome(page, nome):
+    nome_normalizado = normalizar_nome(nome)
+    print(f"[INFO] Buscando funcionário pelo nome: '{nome_normalizado}'")
+    registrar_log_basico(
+        nome_normalizado,
+        "buscar_funcionario",
+        "INFO",
+        f"Iniciando busca do funcionario. URL='{page.url}', titulo='{page.title()}'"
+    )
+
+    try:
+        campo_busca = page.wait_for_selector(
+            'css=div.container-fluid:nth-child(1) > div:nth-child(3) > '
+            'div:nth-child(2) > div:nth-child(1) > input:nth-child(1)',
+            timeout=TIMEOUT_PADRAO
+        )
+    except Exception as e:
+        registrar_log_basico(
+            nome_normalizado,
+            "buscar_funcionario",
+            "ERRO",
+            f"Nao encontrou barra de pesquisa. URL='{page.url}', titulo='{page.title()}', erro='{e}'"
+        )
+        raise
+
+    campo_busca.fill("")
+    campo_busca.fill(nome_normalizado)
+    campo_busca.press("Enter")
+
+    linhas = page.locator(
+        "#Fr > div.content.bg-white.card.crud-content.aos-init.aos-animate > "
+        "div > table > tbody > tr"
+    )
+
+    try:
+        linhas.first.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
+    except PlaywrightTimeoutError:
+        raise RuntimeError("Timeout ao aguardar a tabela de resultados apos a busca.")
+
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        total = linhas.count()
+        for i in range(total):
+            try:
+                celula_nome = linhas.nth(i).locator("td:nth-child(2) span")
+                texto = normalizar_nome(celula_nome.inner_text())
+                if texto == nome_normalizado:
+                    print(f"[INFO] Tabela atualizada, funcionário '{nome_normalizado}' encontrado na linha {i}.")
+                    return
+            except Exception:
+                pass
+        page.wait_for_timeout(200)
+
+    print(f"[ALERTA] Tabela não exibiu '{nome_normalizado}' após a busca; seguindo assim mesmo.")
+
+
+def debug_listar_nomes_tabela(page):
+    print("[DEBUG] Lendo linhas da tabela de resultados...")
+
+    linhas = page.locator(
+        "#Fr > div.content.bg-white.card.crud-content.aos-init.aos-animate > "
+        "div > table > tbody > tr"
+    )
+    try:
+        total = linhas.count()
+    except Exception as e:
+        print(f"[DEBUG] Erro ao contar linhas da tabela: {e}")
+        return
+
+    if total == 0:
+        print("[DEBUG] Nenhuma linha na tabela (count == 0).")
+        return
+
+    print(f"[DEBUG] Total de linhas na tabela: {total}")
+    for i in range(total):
+        try:
+            celula_nome = linhas.nth(i).locator("td:nth-child(2) span")
+            texto = celula_nome.inner_text().strip()
+            print(f"[DEBUG] Linha {i}: '{texto}'")
+        except Exception as e:
+            print(f"[DEBUG] Falha ao ler nome da linha {i}: {e}")
+
+
+def abrir_ponto_funcionario_por_nome(page, nome_alvo):
+    nome_alvo_normalizado = normalizar_nome(nome_alvo)
+    print(f"[INFO] Procurando na tabela o funcionário '{nome_alvo_normalizado}' para abrir o ponto...")
+
+    linhas = page.locator(
+        "#Fr > div.content.bg-white.card.crud-content.aos-init.aos-animate > "
+        "div > table > tbody > tr"
+    )
+
+    total = linhas.count()
+    if total == 0:
+        raise Exception("Tabela de resultados vazia ao tentar abrir ponto do funcionario.")
+
+    for i in range(total):
+        linha = linhas.nth(i)
+        celula_nome = linha.locator("td:nth-child(2) span")
+        texto = normalizar_nome(celula_nome.inner_text())
+        print(f"[DEBUG] Comparando linha {i}: '{texto}'")
+
+        if texto == nome_alvo_normalizado:
+            print(f"[INFO] Encontrado na linha {i}, clicando no botão Editar...")
+            botao_editar = linha.locator("td:nth-child(12) button.btn-grid-edit")
+            botao_editar.click()
+            return
+
+    raise Exception(f"Nenhuma linha da tabela corresponde exatamente a '{nome_alvo_normalizado}'.")
+
+
+def conferir_nome_na_tela(page, nome_esperado):
+    nome_esperado_norm = normalizar_nome(nome_esperado)
+    print(f"[INFO] Conferindo nome na tela de espelho (esperado: '{nome_esperado_norm}')")
+
+    try:
+        elem_nome = page.wait_for_selector(
+            "#Fr > div > div > div:nth-child(4) > div > div > div > "
+            "div > div > div > div:nth-child(1) > div > strong",
+            timeout=TIMEOUT_PADRAO
+        )
+        texto_lido = normalizar_nome(elem_nome.inner_text())
+        print(f"[DEBUG] Nome lido na tela de espelho: '{texto_lido}'")
+    except Exception as e:
+        raise Exception(
+            f"Nao foi possivel ler o nome do funcionario na tela de espelho "
+            f"(elemento nao encontrado): {e}"
+        )
+
+    if texto_lido != nome_esperado_norm:
+        raise Exception(
+            f"Nome na tela de espelho diferente do CSV. "
+            f"Esperado='{nome_esperado_norm}', lido='{texto_lido}'"
+        )
+
+
+def criar_abono(page, linha):
+    """
+    Cria um abono na tela do espelho para a linha de justificativa informada.
+    Retorna True se considerarmos que o abono foi criado com sucesso,
+    False se houve popup de erro do sistema.
+    """
+    nome = linha["Nome_Completo"]
+    data_ini_str_original = str(linha["Data_Inicio"])
+    data_fim_str_original = str(linha["Data_Fim"])
+    motivo = str(linha["Motivo"])
+
+    print(f"[INFO] Criando abono para {nome} | {data_ini_str_original} -> {data_fim_str_original} | Motivo: {motivo}")
+
+    data_ini = parse_data_br(data_ini_str_original)
+    data_fim = parse_data_br(data_fim_str_original)
+
+    if data_ini is None or data_fim is None:
+        raise RuntimeError(
+            f"Datas inválidas: Data_Inicio='{data_ini_str_original}', Data_Fim='{data_fim_str_original}'."
+        )
+
+    if data_fim < data_ini:
+        raise RuntimeError(
+            f"Data_Fim menor que Data_Inicio: {data_ini_str_original} > {data_fim_str_original}."
+        )
+
+    data_ini_str = data_ini.strftime("%d/%m/%Y")
+    data_fim_str = data_fim.strftime("%d/%m/%Y")
+
+    try:
+        print("[INFO] Procurando botão 'Abono de Ponto'...")
+        try:
+            botao_abono = page.get_by_role("button", name="Abono de Ponto")
+            botao_abono.wait_for(state="visible", timeout=TIMEOUT_CURTO)
+        except PlaywrightTimeoutError:
+            botao_abono = page.locator("button:has-text('Abono de Ponto')")
+            botao_abono.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
+
+        botao_abono.scroll_into_view_if_needed()
+        page.wait_for_timeout(250)
+        botao_abono.click()
+        page.wait_for_timeout(500)
+    except PlaywrightTimeoutError:
+        raise RuntimeError("Botão 'Abono de Ponto' não encontrado ou não visível.")
+
+    try:
+        campo_descricao = page.locator("#descricao")
+        campo_data_ini = page.locator("#data_ini")
+        campo_data_fim = page.locator("#data_fim")
+
+        campo_descricao.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
+        campo_data_ini.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
+        campo_data_fim.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
+
+        campo_descricao.fill(motivo)
+        campo_data_ini.fill(data_ini_str)
+        campo_data_fim.fill(data_fim_str)
+
+        botao_salvar = page.get_by_role("button", name="Salvar")
+        botao_salvar.click()
+    except PlaywrightTimeoutError:
+        raise RuntimeError("Erro ao preencher campos de abono ou clicar em 'Salvar'.")
+
+    page.wait_for_timeout(2000)
+
+    if tratar_popup_erro(page, linha):
+        print("[INFO] Abono não criado devido ao erro informado pelo sistema. Fechando modal de abono...")
+
+        try:
+            botao_fechar = page.locator(
+                "body > div.fade.modal.show > div > div > div.modal-body > "
+                "form > div.row > div > div > button:nth-child(2)"
+            )
+            botao_fechar.click()
+            page.wait_for_timeout(200)
+            return False
+        except Exception:
+            pass
+
+        try:
+            botao_x = page.locator(
+                "body > div.fade.modal.show > div > div > div.modal-header > button > span:nth-child(1)"
+            )
+            botao_x.click()
+            page.wait_for_timeout(200)
+        except Exception:
+            print("[ALERTA] Não consegui fechar o modal de abono após erro.")
+        return False
 
     return True
 
 
-
 def voltar_para_lista(page):
-    """
-    Clica no botão Buscar (#btn-buscar-crud) para voltar/recarregar a lista.
-    """
-    print("[INFO] Voltando para tela de lista (botão Buscar)...")
+    print("[INFO] Voltando para tela de lista (tela de espelho)...")
+
     try:
-        botao_buscar = page.locator("#btn-buscar-crud")
-        botao_buscar.wait_for(state="visible", timeout=TIMEOUT_PADRAO)
+        botao_buscar = page.wait_for_selector(
+            "#btn-buscar-crud",
+            timeout=TIMEOUT_CURTO
+        )
+        print("[INFO] Botão Buscar (btn-buscar-crud) encontrado no cartão de ponto, clicando...")
         botao_buscar.click()
-        page.wait_for_timeout(2000)
-    except PlaywrightTimeoutError:
-        print("[ALERTA] Não encontrei o botão Buscar; tentando go_back()...")
-        try:
-            page.go_back()
-            page.wait_for_timeout(2000)
-        except Exception:
-            print("[ERRO] Falha ao voltar com go_back().")
+        time.sleep(1)
+    except Exception as e:
+        raise Exception(
+            f"Nao consegui voltar para a tela de lista a partir do espelho: "
+            f"botao '#btn-buscar-crud' nao encontrado. Erro: {e}"
+        )
+
+    esperar_tela_lista(page)
 
 
 # ==============================
@@ -390,20 +457,33 @@ def voltar_para_lista(page):
 
 def main():
     justificativas = ler_justificativas(CAMINHO_CSV_JUSTIFICATIVAS)
-    print(f"[INFO] Total de linhas no CSV: {len(justificativas)}")
+    print(f"[INFO] Total de linhas no CSV (original): {len(justificativas)}")
+
+    justificativas["Data_Ordenacao"] = justificativas["Data_Inicio"].apply(parse_data_br)
+    justificativas = justificativas.sort_values(
+        by=["Nome_Completo", "Data_Ordenacao"],
+        kind="stable"
+    ).drop(columns=["Data_Ordenacao"]).reset_index(drop=True)
+
+    print(f"[INFO] Total de linhas no CSV (ordenado): {len(justificativas)}")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        page = browser.new_page()
-        page.set_viewport_size({"width": 1366, "height": 768})
+        context = p.chromium.launch_persistent_context(
+            PERFIL_BROWSER,
+            headless=False,
+            slow_mo=500,
+            viewport={"width": 1366, "height": 768},
+        )
+
+        page = context.new_page()
+        page.goto("https://rh247.com.br/230540701/ponto")
 
         print("=" * 60)
-        print("Abra o RH247 NESTA ABA, faça login e deixe na LISTA de funcionários.")
-        print("Certifique-se de:")
-        print("- Campo 'Buscar por' esteja em NOME.")
-        print("- Tabela de funcionários apareça com coluna de Nome e botão Editar.")
+        print("Se for a primeira vez neste perfil, faça login agora no RH247.")
+        print("Depois de logado, vá até a LISTA de funcionários, com 'Buscar por' = NOME.")
+        print("Nas próximas execuções, o login deve ser reaproveitado automaticamente.")
         print("=" * 60)
-        input("Quando estiver pronto nessa tela, pressione ENTER aqui no terminal...")
+        input("Quando estiver na tela de LISTA de funcionários, pressione ENTER aqui no terminal...")
 
         esperar_tela_lista(page)
 
@@ -413,43 +493,44 @@ def main():
             nome_atual = str(linha["Nome_Completo"])
             print("\n" + "=" * 40)
             print(f"[LOOP] Linha {idx} - Funcionário: '{nome_atual}'")
-            registrar_log(linha, "preparar_abono", "INFO",
-                          f"Iniciando processamento da linha {idx} para '{nome_atual}'.")
+            registrar_log(
+                linha,
+                "preparar_abono",
+                "INFO",
+                f"Iniciando processamento da linha {idx} para '{nome_atual}'."
+            )
 
             try:
-                # Se for um novo funcionário (nome diferente do anterior)
                 if normalizar_nome(nome_atual) != normalizar_nome(nome_anterior):
-                    # PRIMEIRA VEZ desse funcionário:
-                    # Pressupomos que já estamos na tela de lista correta.
-                    # Só vamos voltar_para_lista nas próximas vezes (quando trocar de funcionário).
-
-                    if nome_anterior is not None:
-                        # Só tenta voltar se NÃO for a primeira linha de todo o CSV
-                        voltar_para_lista(page)
-
-                    # Buscar funcionário
                     buscar_funcionario_por_nome(page, nome_atual)
-
-
-                    # Debug opcional (pode comentar depois de confiar)
                     debug_listar_nomes_tabela(page)
-
-                    # Abrir espelho
                     abrir_ponto_funcionario_por_nome(page, nome_atual)
-
-                    # Conferir nome na tela
                     conferir_nome_na_tela(page, nome_atual)
                     registrar_log(linha, "conferir_nome", "OK", "Nome na tela confere com o CSV.")
 
-                # Criar abono para esta linha
-                criar_abono(page, linha)
-                registrar_log(linha, "criar_abono", "OK", "Abono criado com sucesso.")
+                sucesso = criar_abono(page, linha)
+                if sucesso:
+                    registrar_log(
+                        linha,
+                        "criar_abono",
+                        "OK",
+                        "Abono criado sem erro de sistema."
+                    )
+                    justificativas.loc[idx, "Status"] = "OK"
+                else:
+                    registrar_log(
+                        linha,
+                        "criar_abono",
+                        "ERRO",
+                        "Sistema exibiu popup de erro ao tentar criar abono."
+                    )
+                    justificativas.loc[idx, "Status"] = "ERRO"
 
             except Exception as e:
                 print(f"[ERRO] Problema ao processar linha {idx}: {e}")
                 registrar_log(linha, "erro_geral", "ERRO", str(e))
+                justificativas.loc[idx, "Status"] = "ERRO"
 
-            # Ver próxima linha para decidir se muda de funcionário
             try:
                 proxima_linha = justificativas.iloc[idx + 1]
                 nome_proximo = str(proxima_linha["Nome_Completo"])
@@ -458,21 +539,35 @@ def main():
                 nome_proximo = None
 
             if nome_proximo is None or normalizar_nome(nome_proximo) != normalizar_nome(nome_atual):
-                # Vai mudar de funcionário -> volta para lista
                 try:
                     voltar_para_lista(page)
-                    registrar_log(linha, "voltar_lista", "INFO",
-                                  "Voltando para lista para próximo funcionário.")
+                    registrar_log(
+                        linha,
+                        "voltar_lista",
+                        "INFO",
+                        "Voltando para lista para próximo funcionário."
+                    )
                 except Exception as e:
-                    registrar_log(linha, "voltar_lista", "ERRO",
-                                  f"Falha ao voltar para lista: {e}")
+                    registrar_log(
+                        linha,
+                        "voltar_lista",
+                        "ERRO",
+                        f"Falha ao voltar para lista: {e}"
+                    )
+
+                justificativas.to_csv(
+                    CAMINHO_CSV_JUSTIFICATIVAS,
+                    index=False,
+                    encoding="latin1"
+                )
 
             nome_anterior = nome_atual
 
         print("\n[INFO] Processamento concluído.")
         print("Verifique o arquivo de logs:", CAMINHO_CSV_LOGS)
-        input("Pressione ENTER para fechar o navegador...")
-        browser.close()
+        print("Verifique também o arquivo de justificativas atualizado:", CAMINHO_CSV_JUSTIFICATIVAS)
+        input("Pressione ENTER para encerrar o script (o navegador pode ser fechado manualmente depois)...")
+        context.close()
 
 
 if __name__ == "__main__":
