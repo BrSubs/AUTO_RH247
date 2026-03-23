@@ -1,0 +1,37 @@
+Algumas otimizações interessantes, sem mudar a regra de negócio:
+
+## 1. Performance de Playwright
+
+- Usar `headless=True` quando não precisar ver a tela, reduz bastante o tempo de execução. [autify](https://autify.com/blog/playwright-best-practices)
+- Reduzir `slow_mo` (ex.: de 350 para 100 ou 0) e trocar `wait_for_timeout` fixo por esperas baseadas em elementos (`wait_for`, `locator.wait_for`). [autify](https://autify.com/blog/playwright-best-practices)
+- Reaproveitar a mesma `page` (você já faz) e evitar `new_page()` desnecessário.
+
+## 2. Menos `input()` e passos manuais
+
+- Substituir o `input()` inicial por uma checagem automática de login (ex.: esperar por algum elemento da tela de lista; se não achar, logar via script). [oxylabs](https://oxylabs.io/blog/playwright-best-practices)
+- Isso permite rodar em agendamento (task scheduler / cron) sem interação.
+
+## 3. Organização do código
+
+- Separar em módulos: `csv_io.py` (carregar/salvar), `web_lista.py`, `web_cartao.py`, `servico.py`, `main.py`. Fica mais fácil de manter e testar partes isoladas. [oxylabs](https://oxylabs.io/blog/playwright-best-practices)
+- Extrair constantes de seletores CSS/XPath para o topo (facilita manutenção quando o RH247 muda algo).
+
+## 4. Pandas e manipulação de dados
+
+- Hoje o loop sobre o `df` é aceitável, mas para muitos registros você pode usar `itertuples()` em vez de acessar `df.iloc[idx]` (menor overhead que `iterrows`). [stackoverflow](https://stackoverflow.com/questions/24870953/does-pandas-iterrows-have-performance-issues)
+- Ao salvar, você já monta um novo DataFrame; se o dataset crescer muito, dá pra vetorizá‑lo (usar operações em colunas em vez de loop Python) mais pra frente. [stackoverflow](https://stackoverflow.com/questions/24870953/does-pandas-iterrows-have-performance-issues)
+
+## 5. Logging
+
+- Migrar os `print` para o módulo `logging`, com dois handlers: console e arquivo (CSV ou texto). [stackoverflow](https://stackoverflow.com/questions/19765139/what-is-the-proper-way-to-do-logging-to-a-csv-file)
+- Com `logging`, você consegue níveis (INFO/DEBUG/ERROR) e desliga/liga debug sem mexer no código de regra de negócio.
+
+## 6. Robustez dos seletores e waits
+
+- Criar funções auxiliares para “esperar tela X” baseadas em elementos estáveis (data-testid, texto fixo, etc.), reduzindo dependência de caminhos XPath longos e frágeis. [oxylabs](https://oxylabs.io/blog/playwright-best-practices)
+- Onde hoje você usa `wait_for_timeout`, preferir `locator.wait_for(state="visible")` e, se necessário, `page.wait_for_load_state("networkidle")`. [playwright](https://playwright.dev/python/docs/api/class-page)
+
+Se quiser, posso te mandar uma versão refatorada só focando em:
+- remover `wait_for_timeout` desnecessário,
+- trocar `print` por `logging`,
+- e encapsular a parte de CSV em um módulo lógico (sem quebrar nada que já está funcionando).
