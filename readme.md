@@ -39,7 +39,7 @@ O arquivo deve seguir a ordem de colunas abaixo para o processamento correto:
 | Coluna | Descrição | Exemplos |
 | :--- | :--- | :--- |
 | **Status** | Controle (Vazio = Processar; `OK` ou `CONFLITO` = Ignorar) | ``, `OK`, `ERRO` |
-| **Nome_Completo** | Nome exatamente como consta no RH247 | `Yan Brasil` |
+| **Nome_Completo** | Nome exatamente como consta no RH247 | `Fulano da Silva Sicrano` |
 | **Dia_Inicio** | Dia inicial do período | `01`, `1` |
 | **Dia_Fim** | Dia final (se vazio, assume o mesmo do início) | `03`, `` |
 | **Mes/Ano** | Competência no formato MM/AA ou MM/AAAA | `03/26`, `03/2026` |
